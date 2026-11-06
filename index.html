@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#8a5a12">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Forge">
-<title>Forge 锻</title>
+<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#8a5a12"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Forge"><meta name="apple-mobile-web-app-status-bar-style" content="default"><title>Forge 锻</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Serif+SC:wght@500;700&display=swap" rel="stylesheet">
@@ -860,6 +860,7 @@ function vHome() {
   const setup = !SAMPLE && HAS_RELAY && !ttsProv();
   return `<div class="wrap">
   ${topbar('Forge', false)}
+  ${installCard()}
   ${setup ? `<section class="card stack" style="border-color:var(--accent)"><b>Turn on the natural voice and your AI teacher</b><p class="small muted">One free Google key, made with your Gmail. About 2 minutes.</p><button class="btn primary" data-a="go" data-v="settings">Set up</button></section>` : ''}
   <section class="card stack-lg">
     <div class="row between">
@@ -1188,6 +1189,8 @@ Exactly 2 questions.`;
   UI.gen = false; render();
 }
 const ACT = {
+  install: async () => { if (!INSTALL_EVT) return; INSTALL_EVT.prompt(); try { await INSTALL_EVT.userChoice; } catch (e) { } INSTALL_EVT = null; render(); },
+  'install-hide': () => { S.settings.installHidden = true; persist(); render(); },
   'ab-play': () => abPlay(),
   'ab-pick': a => abPick(+a.dataset.i),
   'llm-test': async () => {
@@ -1312,6 +1315,21 @@ document.addEventListener('keydown', e => {
   }
   if (st === 'new' && e.key === 'Enter') ACT['new-ok']();
 });
+
+/* ---------- home-screen install ---------- */
+const STANDALONE = (() => { try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch (e) { return false; } })();
+const IOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let INSTALL_EVT = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); INSTALL_EVT = e; if (UI.view === 'home') render(); });
+window.addEventListener('appinstalled', () => { INSTALL_EVT = null; toast('Forge is on your home screen.'); render(); });
+function installCard() {
+  if (STANDALONE || !HAS_RELAY || S.settings.installHidden) return '';
+  if (!INSTALL_EVT && !IOS) return '';
+  return `<section class="card stack"><div class="row between"><b>Put Forge on your home screen</b><button class="btn sm ghost" data-a="install-hide" aria-label="Hide">✕</button></div>
+    ${INSTALL_EVT ? `<p class="small muted">Opens full-screen like an app. Long-press the icon for Drive mode and the teacher.</p><button class="btn primary" data-a="install">Add to home screen</button>`
+      : `<p class="small muted">In Safari, tap <b>Share</b> (the square with an arrow) → <b>Add to Home Screen</b>. It opens full-screen like an app.</p>`}</section>`;
+}
+if (HAS_RELAY && 'serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => { }));
 
 /* ---------- Drive mode: eyes-free, hands-free, interactive drills ---------- */
 const PY = D.py || {};
@@ -1981,6 +1999,12 @@ function abPick(i) {
 }
 
 /* ---------- boot ---------- */
+(() => { // home-screen shortcuts: /?go=drive | teacher | session
+  const go = new URLSearchParams(location.search).get('go');
+  if (go === 'drive' || go === 'teacher') UI.view = go;
+  if (go === 'session') { try { startSession(false); UI.view = 'session'; } catch (e) { } }
+  if (go) try { history.replaceState(null, '', location.pathname); } catch (e) { }
+})();
 render();
 initCloud();
 initSample();
