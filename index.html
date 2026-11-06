@@ -352,24 +352,24 @@ const LS = 'forge.v0', LS_KEY = 'forge.v0.key';
 const fresh = () => ({
   v: 1, updatedAt: 0, cards: {}, log: [], ear: [], speak: [], days: {}, friction: [], stories: [], read: {},
   qi: 0, realm: 0, realmQi: 0, manual: {}, calib: [], writing: {}, custom: {},
-  settings: { newPerDay: 8, retention: 0.9, eink: false, theme: 'auto', voice: '', rate: 0.85, pinyin: true, orModel: 'qwen/qwen3.6-plus', provider: '', models: {} },
+  settings: { newPerDay: 8, retention: 0.9, eink: false, theme: 'auto', voice: '', rate: 0.85, pinyin: true, orModel: 'qwen/qwen3.6-plus', provider: '', models: {}, cloudVoice: 'Cherry', voiceEngine: 'auto' },
 });
 let S = fresh();
 try { const j = localStorage.getItem(LS); if (j) S = Object.assign(fresh(), JSON.parse(j)); S.settings = Object.assign(fresh().settings, S.settings); } catch (e) { /* storage unavailable: keep in memory */ }
 /* ---------- AI providers: keys stay on this device, never synced ---------- */
 const PROVIDERS = {
-  deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash', models: ['deepseek-flash', 'deepseek-v4-pro'], extra: { thinking: { type: 'disabled' } }, ph: 'sk-…', where: 'platform.deepseek.com → API keys', note: 'Recommended. Native Chinese, about $1 a month for daily lessons (double during 6:30–9:30 and 11:30–15:30 IST on weekdays).' },
-  qwen: { name: 'Qwen (Alibaba Cloud)', url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen3.8-flash', models: ['qwen3.8-flash', 'qwen3.7-plus', 'qwen3.8-max'], extra: { enable_thinking: false }, ph: 'sk-…', where: 'Alibaba Cloud Model Studio, Singapore region → API keys', note: 'Native Chinese. New accounts get 1M free tokens per model for 90 days.' },
+  deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash', models: ['deepseek-flash', 'deepseek-v4-pro'], extra: { thinking: { type: 'disabled' } }, ph: 'sk-…', where: 'platform.deepseek.com → API keys', note: 'Cheapest teacher brain (about $1 a month). Needs its own key; the natural voice still uses your Alibaba key.' },
+  qwen: { name: 'Qwen (Alibaba Cloud)', url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen3.7-plus', models: ['qwen3.7-plus', 'qwen3.8-flash', 'qwen3.8-max'], extra: { enable_thinking: false }, ph: 'sk-…', where: 'Alibaba Cloud Model Studio (International, Singapore region) → API Key', note: 'Recommended. One key runs the teacher AND the natural Chinese voice. About $3–5 a month; new accounts get free tokens for 90 days.' },
   glm: { name: 'GLM (Z.ai)', url: 'https://api.z.ai/api/paas/v4/chat/completions', model: 'glm-4.7-flash', models: ['glm-4.7-flash', 'glm-4.7', 'glm-5.2'], extra: { thinking: { type: 'disabled' } }, ph: 'API key', where: 'z.ai → API keys', note: 'GLM-4.7-Flash is free. A good backup.' },
   openrouter: { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1/chat/completions', model: 'qwen/qwen3.6-plus', models: ['qwen/qwen3.6-plus', 'deepseek/deepseek-v4-pro', 'z-ai/glm-5-turbo'], extra: { reasoning: { enabled: false } }, ph: 'sk-or-…', where: 'openrouter.ai/keys', note: 'One key for many models; 5.5% fee on every top-up ($0.80 minimum).' },
 };
 let KEYS = {};
 try { const raw = localStorage.getItem(LS_KEY) || ''; KEYS = raw.startsWith('{') ? JSON.parse(raw) : raw ? { openrouter: raw } : {}; } catch (e) { KEYS = {}; }
 function saveKeys() { try { localStorage.setItem(LS_KEY, JSON.stringify(KEYS)); } catch (e) { } }
-function provId() { const p = S.settings.provider; return PROVIDERS[p] ? p : (KEYS.openrouter && !KEYS.deepseek ? 'openrouter' : 'deepseek'); }
+function provId() { const p = S.settings.provider; return PROVIDERS[p] ? p : (['qwen', 'deepseek', 'glm', 'openrouter'].find(k => KEYS[k]) || 'qwen'); }
 function provModel(id = provId()) { return (S.settings.models || {})[id] || (id === 'openrouter' && S.settings.orModel) || PROVIDERS[id].model; }
 function apiKey() { return KEYS[provId()] || ''; }
-const HAS_RELAY = /^https?:$/.test(location.protocol) && !/^(localhost|127\.)/.test(location.hostname);
+const HAS_RELAY = window.FORGE_RELAY === true || /\.vercel\.app$/.test(location.hostname) || (() => { try { return !!window.FORGE_HOSTED && location.host === new URL(window.FORGE_HOSTED).host; } catch (e) { return false; } })();
 let VIA_RELAY = false;
 async function chatLLM(messages, { json = false, max = 500, temp = 0.6 } = {}) {
   const id = provId(), P = PROVIDERS[id], key = KEYS[id];
@@ -487,7 +487,7 @@ function loadVoices() {
 }
 if ('speechSynthesis' in window) { loadVoices(); speechSynthesis.onvoiceschanged = () => { loadVoices(); if (UI.view === 'settings') render(); }; }
 function mainVoice() { return VOICES.find(v => v.name === S.settings.voice) || VOICES.find(v => /xiaoxiao|yunxi|tingting|li-mu|google/i.test(v.name)) || VOICES[0] || null; }
-function say(text, o = {}) {
+function deviceSay(text, o = {}) {
   return new Promise(res => {
     if (!('speechSynthesis' in window)) { toast('This browser has no speech output.'); return res(); }
     if (!VOICES.length) loadVoices();
@@ -502,9 +502,9 @@ function say(text, o = {}) {
     if (!VOICES.length && speechSynthesis.getVoices().length) toastOnce('novoice', 'No Chinese voice found on this device. Add a Chinese (zh-CN) voice in system speech settings.');
   });
 }
-function sayVaried(text) { // many-voice drill: rotate voices, vary speed and pitch a little
+function deviceSayVaried(text) { // many-voice drill: rotate voices, vary speed and pitch a little
   const v = VOICES.length ? pick(VOICES) : null;
-  return say(text, { voice: v, rate: 0.72 + Math.random() * 0.3, pitch: 0.88 + Math.random() * 0.24 });
+  return deviceSay(text, { voice: v, rate: 0.72 + Math.random() * 0.3, pitch: 0.88 + Math.random() * 0.24 });
 }
 
 /* ---------- segmentation (longest match over deck + extras) ---------- */
@@ -828,6 +828,7 @@ function startSession(short) {
   const speakLines = short ? (dueZ.length ? dueZ : nextNew(3)).slice(0, 2).map(z => [z, WORD[z] ? WORD[z].p : '', WORD[z] ? WORD[z].e : '']) : reading.st.lines.slice().sort((a, b) => a[0].length - b[0].length).slice(0, 3);
   if (!speakLines.length) speakLines.push(['你好', 'Nǐ hǎo', 'Hello']);
   SES = { short, steps, i: 0, t0: Date.now(), dueQ: dueZ, fresh: freshZ, freshQ: freshZ.slice(), newDone: 0, reading, ear: makeEar(short ? 0 : 8), earK: 0, earOk: 0, reviewed: 0, revealed: false, speakLines, speakK: 0, spokeThis: false, qi0: S.qi, answered: {} };
+  prefetchZh([...SES.ear.map(e => e.z), ...speakLines.map(l => l[0]), ...freshZ, ...freshZ.map(z => WORD[z] && WORD[z].s), ...dueZ.slice(0, 20)]);
   UI.view = 'session'; render(); window.scrollTo(0, 0);
 }
 function nextStep() { SES.i++; SES.revealed = false; render(); window.scrollTo(0, 0); }
@@ -836,6 +837,7 @@ function cardMode(z) { const c = S.cards[z]; if (!c || c.reps < 1) return 'read'
 /* ---------- views ---------- */
 const HOST_THEME = document.documentElement.dataset.theme;
 function render() {
+  prefetchVisible();
   document.documentElement.dataset.eink = S.settings.eink ? '1' : '0';
   if (S.settings.theme === 'auto') { if (HOST_THEME) document.documentElement.dataset.theme = HOST_THEME; else delete document.documentElement.dataset.theme; }
   else document.documentElement.dataset.theme = S.settings.theme;
@@ -853,8 +855,10 @@ function vHome() {
   const ri = realmInfo(), due = dueList().length, wk = weekly(), done = day().done;
   const newLeft = Math.max(0, S.settings.newPerDay - day().new);
   const est = Math.round(2 + Math.min(due, 60) * 0.12 + Math.min(newLeft, nextNew(99).length) * 0.4 + 4 + 3);
+  const setup = !SAMPLE && HAS_RELAY && !KEYS.qwen && !apiKey();
   return `<div class="wrap">
   ${topbar('Forge', false)}
+  ${setup ? `<section class="card stack" style="border-color:var(--accent)"><b>Turn on the natural voice and your AI teacher</b><p class="small muted">One Alibaba Cloud key, pasted once. About 3 minutes.</p><button class="btn primary" data-a="go" data-v="settings">Set up</button></section>` : ''}
   <section class="card stack-lg">
     <div class="row between">
       <div><div class="realm-zh">${ri.r.zh}${CN_NUM[ri.layer]}层</div><div class="muted small">${ri.r.en}, layer ${ri.layer} · 灵气 ${S.qi.toLocaleString()} qi</div></div>
@@ -1085,9 +1089,13 @@ function vSettings() {
   </section>
   <section class="card stack">
     <b>Voice</b>
-    ${VOICES.length ? `<select id="voice" data-change="voice" aria-label="Chinese voice">${VOICES.map(v => `<option value="${esc(v.name)}" ${mainVoice() && v.name === mainVoice().name ? 'selected' : ''}>${esc(v.name)} (${esc(v.lang)})</option>`).join('')}</select>` : '<p class="small" style="color:var(--warn)">No Chinese voice on this device. On Android or Boox: install Google Speech Services and add Chinese (Mandarin). On Windows: add Chinese in Speech settings.</p>'}
+    ${HAS_RELAY ? (KEYS.qwen ? `<div class="row between"><div><b class="small">Natural voice</b><div class="tiny muted">Qwen3-TTS, the same voice on every device. Clips are saved here, so repeats are instant and free.</div></div><div class="seg"><button class="${s.voiceEngine !== 'device' ? 'on' : ''}" data-a="set" data-k="voiceEngine" data-val="auto">On</button><button class="${s.voiceEngine === 'device' ? 'on' : ''}" data-a="set" data-k="voiceEngine" data-val="device">Off</button></div></div>
+    ${TTS.bad ? `<p class="small" style="color:var(--bad)">${TTS.bad === 'badkey' ? 'Alibaba rejected the key. Check it under AI teacher below.' : TTS.bad === 'nofunds' ? 'Your Alibaba balance is empty.' : 'Qwen-TTS isn’t enabled on your Alibaba account yet.'} Using the device voice for now.</p>` : ''}
+    ${s.voiceEngine !== 'device' ? `<label for="cvoice">Teacher's voice</label><select id="cvoice" data-change="cloudvoice">${QWEN_VOICES.map(([k, l]) => `<option value="${k}" ${k === mainCloudVoice() ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><p class="tiny muted">Tone drills also use the other voices, so your ear learns tones from many speakers.</p>` : ''}`
+      : `<div class="stack" style="border:1px solid var(--accent);border-radius:12px;padding:12px"><b class="small">Turn on the natural voice</b><p class="tiny muted">Paste your Alibaba Cloud (Model Studio) key. The same key also runs the AI teacher.</p><input id="qwenkey" type="password" autocomplete="off" data-change="qwenkey" placeholder="sk-…" aria-label="Alibaba Cloud key"></div>`) : ''}
+    ${!HAS_RELAY || !KEYS.qwen || s.voiceEngine === 'device' ? (VOICES.length ? `<label for="voice">Device voice${HAS_RELAY ? ' (backup)' : ''}</label><select id="voice" data-change="voice" aria-label="Device Chinese voice">${VOICES.map(v => `<option value="${esc(v.name)}" ${mainVoice() && v.name === mainVoice().name ? 'selected' : ''}>${esc(v.name)} (${esc(v.lang)})</option>`).join('')}</select>` : '<p class="small" style="color:var(--warn)">No Chinese voice on this device. On Android or Boox: install Google Speech Services and add Chinese (Mandarin). On Windows: add Chinese in Speech settings.</p>') : ''}
     <label for="rate">Speed: ${s.rate.toFixed(2)}×</label><input id="rate" type="range" min="0.5" max="1.2" step="0.05" value="${s.rate}" data-change="rate">
-    <div class="row"><button class="btn sm" data-a="play" data-say="欢迎参观我们的工厂。">▶ Test voice</button><span class="tiny muted">${VOICES.length} Chinese voice${VOICES.length === 1 ? '' : 's'}; drills rotate between them.</span></div>
+    <div class="row"><button class="btn sm" data-a="play" data-say="欢迎参观我们的工厂。">▶ Test voice</button><span class="tiny muted">${cloudVoiceOn() ? 'Natural voice: ' + esc(mainCloudVoice()) : VOICES.length + ' device voice' + (VOICES.length === 1 ? '' : 's')}</span></div>
   </section>
   <section class="card stack">
     <b>AI teacher and stories</b>
@@ -1277,10 +1285,12 @@ document.addEventListener('change', async e => {
   const t = e.target;
   if (t.dataset.file) { const file = t.files && t.files[0]; if (!file) return; try { const rec = await decodeFile(file); handleRecording(t.dataset.file, rec); } catch (err) { toast('Could not read that recording. Try m4a, mp3 or wav.'); } t.value = ''; return; }
   const k = t.dataset.change; if (!k) return;
-  if (k === 'voice') { S.settings.voice = t.value; persist(); say('你好'); }
+  if (k === 'voice') { S.settings.voice = t.value; persist(); deviceSay('你好'); }
+  if (k === 'cloudvoice') { S.settings.cloudVoice = t.value; persist(); say('你好，欢迎来到我们的工厂。'); }
+  if (k === 'qwenkey') { const v = t.value.trim(); if (v) { KEYS.qwen = v; TTS.bad = ''; saveKeys(); toast('Natural voice on. The teacher uses this key too.'); setTimeout(render); } }
   if (k === 'rate') { S.settings.rate = +t.value; persist(); render(); }
   if (k === 'prov') { S.settings.provider = t.value; UI.llmTest = ''; VIA_RELAY = false; persist(); setTimeout(render); }
-  if (k === 'apikey') { const v = t.value.trim(); if (v) KEYS[provId()] = v; else delete KEYS[provId()]; saveKeys(); UI.llmTest = ''; setTimeout(render); }
+  if (k === 'apikey') { const v = t.value.trim(); if (v) KEYS[provId()] = v; else delete KEYS[provId()]; if (provId() === 'qwen') TTS.bad = ''; saveKeys(); UI.llmTest = ''; setTimeout(render); }
   if (k === 'model') { (S.settings.models ||= {})[provId()] = t.value.trim(); persist(); }
   if (k === 'gym-word') { UI.gymWord = D.pairs.find(p => p[0] === t.value); render(); }
   if (k === 'hw-pick') { UI.writeChar = t.value; render(); }
@@ -1358,7 +1368,7 @@ const EN_LANG = 'en-IN';
 let EN_VOICES = [];
 function loadEnVoices() { if (!('speechSynthesis' in window)) return; const all = speechSynthesis.getVoices(); EN_VOICES = [...all.filter(v => /en[-_]IN/i.test(v.lang)), ...all.filter(v => /en[-_](GB|US|AU)/i.test(v.lang))]; }
 if ('speechSynthesis' in window) { loadEnVoices(); speechSynthesis.addEventListener && speechSynthesis.addEventListener('voiceschanged', loadEnVoices); }
-function sayEn(text) {
+function deviceSayEn(text) {
   return new Promise(res => {
     if (!('speechSynthesis' in window)) return res();
     if (!EN_VOICES.length) loadEnVoices();
@@ -1424,6 +1434,10 @@ async function missFeedback(g, j, w) {
   if (j.kind === 'tone' && j.slips && j.slips.length) { const s = j.slips[0]; await de(g, `Close. Tone ${TONE_WORD[s.want]}, not ${TONE_WORD[s.said]}.`); }
   await dz(g, w.z, 0.7); await sleep(300); await dz(g, w.z);
   await de(g, 'Again.');
+}
+function driveWarm(i) { // fetch the next few items' audio while this one plays
+  if (!cloudVoiceOn() || !DRV.q) return;
+  for (const it of DRV.q.slice(i, i + 4)) { const w = WORD[it.z]; prefetchZh([it.z, it.s]); if (w) prefetchEn(['New word. ' + enGloss(w) + '.', 'Say: ' + enGloss(w) + '.', enGloss(w) + '.']); }
 }
 async function runItem(it, g) {
   const w = WORD[it.z];
@@ -1526,6 +1540,7 @@ async function driveLoop() {
       DRV.q = buildDrive(); DRV.i = 0; continue;
     }
     const it = DRV.q[DRV.i], g = DRV.gen;
+    driveWarm(DRV.i);
     try { await runItem(it, g); DRV.i++; DRV.st.items++; }
     catch (e) {
       if (e === 'nomic') { stopDrive(); UI.driveErr = DRV.noSR ? 'nosr' : 'mic'; render(); return; }
@@ -1540,12 +1555,13 @@ async function startDrive() {
   DRV.q = buildDrive();
   try { if (navigator.wakeLock) DRV.wake = await navigator.wakeLock.request('screen'); } catch (e) { }
   render();
+  driveWarm(0); prefetchEn(['Again.', 'Your turn.', 'Meaning?', 'Tones?', 'Repeat.']);
   await sayEn('Drive mode. Answer out loud after the beep.');
   driveLoop();
 }
-function pauseDrive() { DRV.paused = true; DRV.gen++; try { speechSynthesis.cancel(); } catch (e) { } try { DRV.rec && DRV.rec.abort(); } catch (e) { } setStatus('Paused'); paintDrive(); }
+function pauseDrive() { DRV.paused = true; DRV.gen++; hushAll(); try { DRV.rec && DRV.rec.abort(); } catch (e) { } setStatus('Paused'); paintDrive(); }
 function resumeDrive() { DRV.paused = false; DRV.gen++; setStatus(''); paintDrive(); }
-function stopDrive() { DRV.on = false; DRV.gen++; try { speechSynthesis.cancel(); } catch (e) { } try { DRV.rec && DRV.rec.abort(); } catch (e) { } try { DRV.wake && DRV.wake.release(); } catch (e) { } if (DRV.st.items) { day().done = day().done || (DRV.st.items >= 20 ? 1 : 0); persist(); } }
+function stopDrive() { DRV.on = false; DRV.gen++; hushAll(); try { DRV.rec && DRV.rec.abort(); } catch (e) { } try { DRV.wake && DRV.wake.release(); } catch (e) { } if (DRV.st.items) { day().done = day().done || (DRV.st.items >= 20 ? 1 : 0); persist(); } }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && DRV.on && !DRV.paused) pauseDrive(); });
 
 /* view */
@@ -1731,6 +1747,7 @@ async function teacherLoop() {
     try {
       if (!TCH.pending) { setTStatus('thinking'); TCH.pending = await teacherTurn(next); guardT(g); registerTeach(TCH.pending.teach); TCH.st.turns++; }
       const turn = TCH.pending; TCH.turn = turn; TCH.heard = ''; TCH.check = ''; paintTeacher();
+      for (const seg of turn.say) seg.lang === 'zh' ? prefetchZh([seg.text]) : prefetchEn([seg.text]);
       for (const seg of turn.say) { guardT(g); setTStatus('speaking'); if (seg.lang === 'zh') await say(seg.text, { rate: seg.slow ? 0.66 : 0.85 }); else await sayEn(seg.text); }
       guardT(g);
       let reply;
@@ -1761,11 +1778,11 @@ async function startTeacher() {
   render(); teacherLoop();
 }
 function stopTeacher() {
-  TCH.on = false; TCH.gen++; try { speechSynthesis.cancel(); } catch (e) { } try { DRV.rec && DRV.rec.abort(); } catch (e) { } try { TCH.wake && TCH.wake.release(); } catch (e) { }
+  TCH.on = false; TCH.gen++; hushAll(); try { DRV.rec && DRV.rec.abort(); } catch (e) { } try { TCH.wake && TCH.wake.release(); } catch (e) { }
   for (const z of Object.keys(TCH.taughtNow)) if (!S.cards[z]) { S.cards[z] = schedule(null, 2); day().new++; }
   TCH.taughtNow = {}; if (TCH.st.turns >= 15) day().done = 1; persist();
 }
-function pauseTeacher() { TCH.paused = true; TCH.gen++; try { speechSynthesis.cancel(); } catch (e) { } try { DRV.rec && DRV.rec.abort(); } catch (e) { } setTStatus('Paused'); paintTeacher(); }
+function pauseTeacher() { TCH.paused = true; TCH.gen++; hushAll(); try { DRV.rec && DRV.rec.abort(); } catch (e) { } setTStatus('Paused'); paintTeacher(); }
 function resumeTeacher() { TCH.paused = false; TCH.gen++; setTStatus(''); paintTeacher(); }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && TCH.on && !TCH.paused && !TCH.typeMode) pauseTeacher(); });
 function teacherCard() {
@@ -1808,6 +1825,112 @@ Object.assign(ACT, {
   'tch-focus': a => { UI.tFocus = a.dataset.f; render(); },
 });
 document.addEventListener('submit', e => { const f = e.target; if (f.dataset.form !== 'tch') return; e.preventDefault(); const inp = $('#tch-in'); const v = inp.value.trim(); if (!v || !TCH.typed) return; inp.value = ''; TCH.typed(v); });
+
+/* ---------- natural voice: Qwen3-TTS through Forge's relay, cached on the device; device voice is the fallback ---------- */
+const QWEN_VOICES = [['Cherry', 'Cherry · warm female'], ['Serena', 'Serena · calm female'], ['Chelsie', 'Chelsie · bright female'], ['Momo', 'Momo · young female'], ['Vivian', 'Vivian · female'], ['Maia', 'Maia · female'], ['Ethan', 'Ethan · male, standard'], ['Moon', 'Moon · male'], ['Kai', 'Kai · male'], ['Ryan', 'Ryan · male']];
+const QWEN_POOL = QWEN_VOICES.map(v => v[0]);
+const TTS = { el: null, mem: new Map(), inflight: new Map(), bad: '', db: null, playing: null, epoch: 0, unlocked: false, active: 0, q: [] };
+function cloudVoiceOn() { return HAS_RELAY && !!KEYS.qwen && S.settings.voiceEngine !== 'device' && !TTS.bad; }
+function mainCloudVoice() { return QWEN_POOL.includes(S.settings.cloudVoice) ? S.settings.cloudVoice : 'Cherry'; }
+const ttsKey = (text, voice, lang) => voice + '|' + lang + '|' + text;
+function ttsDB() {
+  if (!TTS.db) TTS.db = new Promise(res => { try { const r = indexedDB.open('forge-tts', 1); r.onupgradeneeded = () => r.result.createObjectStore('clips'); r.onsuccess = () => res(r.result); r.onerror = () => res(null); } catch (e) { res(null); } });
+  return TTS.db;
+}
+async function dbGet(k) { const db = await ttsDB(); if (!db) return null; return new Promise(res => { try { const q = db.transaction('clips').objectStore('clips').get(k); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); } catch (e) { res(null); } }); }
+async function dbPut(k, blob) { const db = await ttsDB(); if (!db) return; try { db.transaction('clips', 'readwrite').objectStore('clips').put(blob, k); } catch (e) { } }
+function ttsSlot() { return new Promise(r => { if (TTS.active < 3) { TTS.active++; r(); } else TTS.q.push(r); }); }
+function ttsFree() { const n = TTS.q.shift(); if (n) n(); else TTS.active--; }
+function clip(text, voice = mainCloudVoice(), lang = 'Chinese') {
+  text = String(text).trim();
+  const k = ttsKey(text, voice, lang);
+  if (TTS.mem.has(k)) return Promise.resolve(TTS.mem.get(k));
+  if (TTS.inflight.has(k)) return TTS.inflight.get(k);
+  const p = (async () => {
+    let blob = await dbGet(k);
+    if (!blob) {
+      if (!cloudVoiceOn()) throw new Error('off');
+      await ttsSlot();
+      try {
+        const r = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + KEYS.qwen }, body: JSON.stringify({ text, voice, lang }) });
+        if (r.status === 401) { TTS.bad = 'badkey'; ttsNotice(); throw new Error('badkey'); }
+        if (r.status === 403) { TTS.bad = 'denied'; ttsNotice(); throw new Error('denied'); }
+        if (r.status === 402) { TTS.bad = 'nofunds'; ttsNotice(); throw new Error('nofunds'); }
+        if (!r.ok) throw new Error('tts ' + r.status);
+        blob = await r.blob(); if (!blob.size) throw new Error('empty');
+        dbPut(k, blob);
+      } finally { ttsFree(); }
+    }
+    const url = URL.createObjectURL(blob); TTS.mem.set(k, url); return url;
+  })();
+  TTS.inflight.set(k, p);
+  p.then(() => TTS.inflight.delete(k), () => TTS.inflight.delete(k));
+  return p;
+}
+function ttsNotice() {
+  const msg = { badkey: 'Natural voice is off: Alibaba rejected the key. Check it in Settings.', denied: 'Natural voice is off: Qwen-TTS isn’t enabled on your Alibaba account yet.', nofunds: 'Natural voice is off: your Alibaba balance is empty.' }[TTS.bad];
+  if (msg) toastOnce('tts-' + TTS.bad, msg);
+}
+function prefetchZh(texts) { if (!cloudVoiceOn()) return; for (const t of texts) if (t && /\p{Script=Han}/u.test(t)) clip(t).catch(() => { }); }
+function prefetchEn(texts) { if (!cloudVoiceOn()) return; for (const t of texts) if (t) clip(t, mainCloudVoice(), 'English').catch(() => { }); }
+function ttsEl() { if (!TTS.el) { TTS.el = new Audio(); TTS.el.preload = 'auto'; } return TTS.el; }
+const SILENT = (() => { try { const n = 240, b = new ArrayBuffer(44 + n * 2), v = new DataView(b), w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0))); w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 24000, true); v.setUint32(28, 48000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true); return URL.createObjectURL(new Blob([b], { type: 'audio/wav' })); } catch (e) { return ''; } })();
+function unlockAudio() { // iPhone needs one play() inside a tap before audio can start on its own later
+  if (TTS.unlocked || !SILENT) return; TTS.unlocked = true;
+  try { const a = ttsEl(); a.src = SILENT; const p = a.play(); if (p) p.catch(() => { TTS.unlocked = false; }); } catch (e) { TTS.unlocked = false; }
+}
+document.addEventListener('pointerdown', unlockAudio, true);
+function playUrl(url, rate) {
+  return new Promise(res => {
+    if (TTS.playing) TTS.playing(true);
+    const a = ttsEl(); let done = false, t = 0;
+    const fin = ok => { if (done) return; done = true; a.onended = a.onerror = null; clearTimeout(t); if (TTS.playing === fin) TTS.playing = null; res(ok); };
+    a.onended = () => fin(true); a.onerror = () => fin(false);
+    a.src = url; a.defaultPlaybackRate = rate; a.playbackRate = rate;
+    try { a.preservesPitch = true; a.webkitPreservesPitch = true; } catch (e) { }
+    t = setTimeout(() => fin(true), 20000); TTS.playing = fin;
+    try { const p = a.play(); if (p) p.catch(() => fin(false)); } catch (e) { fin(false); }
+  });
+}
+function hushAll() {
+  TTS.epoch++;
+  try { speechSynthesis.cancel(); } catch (e) { }
+  try { if (TTS.el) TTS.el.pause(); } catch (e) { }
+  if (TTS.playing) TTS.playing(true);
+}
+const cloudRate = r => clamp((r ?? S.settings.rate) + 0.05, 0.7, 1.15);
+const within = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('slow')), ms))]);
+async function cloudSay(text, voice, lang, rate) {
+  const ep = TTS.epoch;
+  const url = await within(clip(text, voice, lang), 6000).catch(() => null);
+  if (!url || ep !== TTS.epoch) return !!url; // paused while loading: stay quiet
+  try { speechSynthesis.cancel(); } catch (e) { }
+  return playUrl(url, rate);
+}
+async function say(text, o = {}) {
+  text = String(text);
+  if (cloudVoiceOn() && /\p{Script=Han}/u.test(text) && await cloudSay(text, o.cloud || mainCloudVoice(), 'Chinese', cloudRate(o.rate))) return;
+  return deviceSay(text, o);
+}
+async function sayEn(text) {
+  if (cloudVoiceOn() && await cloudSay(text, mainCloudVoice(), 'English', 1)) return;
+  return deviceSayEn(text);
+}
+function sayVaried(text) { // many-voice drill: real different speakers once they're cached, a little speed variation
+  if (cloudVoiceOn()) {
+    const ready = QWEN_POOL.filter(v => TTS.mem.has(ttsKey(String(text).trim(), v, 'Chinese')));
+    const v = ready.length ? pick(ready) : mainCloudVoice();
+    QWEN_POOL.filter(x => !ready.includes(x)).sort(() => Math.random() - 0.5).slice(0, 2).forEach(x => clip(text, x).catch(() => { }));
+    return say(text, { cloud: v, rate: 0.75 + Math.random() * 0.25 });
+  }
+  return deviceSayVaried(text);
+}
+let PREFETCH_T = 0;
+function prefetchVisible() { // warm the clips for every ▶ button on screen
+  if (!cloudVoiceOn()) return;
+  clearTimeout(PREFETCH_T);
+  PREFETCH_T = setTimeout(() => prefetchZh([...document.querySelectorAll('[data-say]')].slice(0, 16).map(b => b.dataset.say)), 250);
+}
 
 /* ---------- boot ---------- */
 render();
