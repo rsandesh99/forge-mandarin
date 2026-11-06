@@ -2,6 +2,7 @@
 // The browser sends its own key in the Authorization header; nothing is stored or logged here.
 // Used only when a provider blocks direct browser calls (CORS).
 const PROVIDERS = {
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
   deepseek: 'https://api.deepseek.com/chat/completions',
   qwen: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions',
   glm: 'https://api.z.ai/api/paas/v4/chat/completions',

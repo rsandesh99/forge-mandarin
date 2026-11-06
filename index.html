@@ -352,21 +352,22 @@ const LS = 'forge.v0', LS_KEY = 'forge.v0.key';
 const fresh = () => ({
   v: 1, updatedAt: 0, cards: {}, log: [], ear: [], speak: [], days: {}, friction: [], stories: [], read: {},
   qi: 0, realm: 0, realmQi: 0, manual: {}, calib: [], writing: {}, custom: {},
-  settings: { newPerDay: 8, retention: 0.9, eink: false, theme: 'auto', voice: '', rate: 0.85, pinyin: true, orModel: 'qwen/qwen3.6-plus', provider: '', models: {}, cloudVoice: 'Cherry', voiceEngine: 'auto' },
+  settings: { newPerDay: 8, retention: 0.9, eink: false, theme: 'auto', voice: '', rate: 0.85, pinyin: true, orModel: 'qwen/qwen3.6-plus', provider: '', models: {}, cloudVoice: '', cloudVoices: {}, voiceEngine: 'auto', ttsEngine: '' },
 });
 let S = fresh();
 try { const j = localStorage.getItem(LS); if (j) S = Object.assign(fresh(), JSON.parse(j)); S.settings = Object.assign(fresh().settings, S.settings); } catch (e) { /* storage unavailable: keep in memory */ }
 /* ---------- AI providers: keys stay on this device, never synced ---------- */
 const PROVIDERS = {
-  deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash', models: ['deepseek-flash', 'deepseek-v4-pro'], extra: { thinking: { type: 'disabled' } }, ph: 'sk-…', where: 'platform.deepseek.com → API keys', note: 'Cheapest teacher brain (about $1 a month). Needs its own key; the natural voice still uses your Alibaba key.' },
-  qwen: { name: 'Qwen (Alibaba Cloud)', url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen3.7-plus', models: ['qwen3.7-plus', 'qwen3.8-flash', 'qwen3.8-max'], extra: { enable_thinking: false }, ph: 'sk-…', where: 'Alibaba Cloud Model Studio (International, Singapore region) → API Key', note: 'Recommended. One key runs the teacher AND the natural Chinese voice. About $3–5 a month; new accounts get free tokens for 90 days.' },
+  gemini: { name: 'Gemini (Google)', url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model: 'gemini-3.8-flash', models: ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'], extra: { reasoning_effort: 'low' }, ph: 'AIza…', where: 'aistudio.google.com → Get API key (sign in with Gmail)', note: 'Recommended. One free Google key runs the teacher AND the natural Chinese voice. Works in India.' },
+  deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash', models: ['deepseek-flash', 'deepseek-v4-pro'], extra: { thinking: { type: 'disabled' } }, ph: 'sk-…', where: 'platform.deepseek.com → API keys', note: 'Cheapest teacher brain (about $1 a month). Needs its own key; the natural voice still needs your Google key.' },
+  qwen: { name: 'Qwen (Alibaba Cloud)', url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen3.7-plus', models: ['qwen3.7-plus', 'qwen3.8-flash', 'qwen3.8-max'], extra: { enable_thinking: false }, ph: 'sk-…', where: 'Alibaba Cloud Model Studio (International, Singapore region) → API Key', note: 'Also gives the Qwen voice, but Alibaba Cloud signup isn’t open in India.' },
   glm: { name: 'GLM (Z.ai)', url: 'https://api.z.ai/api/paas/v4/chat/completions', model: 'glm-4.7-flash', models: ['glm-4.7-flash', 'glm-4.7', 'glm-5.2'], extra: { thinking: { type: 'disabled' } }, ph: 'API key', where: 'z.ai → API keys', note: 'GLM-4.7-Flash is free. A good backup.' },
   openrouter: { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1/chat/completions', model: 'qwen/qwen3.6-plus', models: ['qwen/qwen3.6-plus', 'deepseek/deepseek-v4-pro', 'z-ai/glm-5-turbo'], extra: { reasoning: { enabled: false } }, ph: 'sk-or-…', where: 'openrouter.ai/keys', note: 'One key for many models; 5.5% fee on every top-up ($0.80 minimum).' },
 };
 let KEYS = {};
 try { const raw = localStorage.getItem(LS_KEY) || ''; KEYS = raw.startsWith('{') ? JSON.parse(raw) : raw ? { openrouter: raw } : {}; } catch (e) { KEYS = {}; }
 function saveKeys() { try { localStorage.setItem(LS_KEY, JSON.stringify(KEYS)); } catch (e) { } }
-function provId() { const p = S.settings.provider; return PROVIDERS[p] ? p : (['qwen', 'deepseek', 'glm', 'openrouter'].find(k => KEYS[k]) || 'qwen'); }
+function provId() { const p = S.settings.provider; return PROVIDERS[p] ? p : (['gemini', 'qwen', 'deepseek', 'glm', 'openrouter'].find(k => KEYS[k]) || 'gemini'); }
 function provModel(id = provId()) { return (S.settings.models || {})[id] || (id === 'openrouter' && S.settings.orModel) || PROVIDERS[id].model; }
 function apiKey() { return KEYS[provId()] || ''; }
 const HAS_RELAY = window.FORGE_RELAY === true || /\.vercel\.app$/.test(location.hostname) || (() => { try { return !!window.FORGE_HOSTED && location.host === new URL(window.FORGE_HOSTED).host; } catch (e) { return false; } })();
@@ -386,6 +387,7 @@ async function chatLLM(messages, { json = false, max = 500, temp = 0.6 } = {}) {
     return fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify({ provider: id, body: b }) });
   };
   let r = await send(body);
+  if (r.status === 400) { const t = await r.clone().text().catch(() => ''); if (/API[_ ]KEY[_ ]INVALID|API key not valid/i.test(t)) throw 'badkey'; }
   if (r.status === 400) { const b2 = Object.assign({}, body); delete b2.response_format; for (const k of Object.keys(P.extra)) delete b2[k]; r = await send(b2); }
   if (r.status === 401) throw 'badkey';
   if (r.status === 402) throw 'nofunds';
@@ -855,10 +857,10 @@ function vHome() {
   const ri = realmInfo(), due = dueList().length, wk = weekly(), done = day().done;
   const newLeft = Math.max(0, S.settings.newPerDay - day().new);
   const est = Math.round(2 + Math.min(due, 60) * 0.12 + Math.min(newLeft, nextNew(99).length) * 0.4 + 4 + 3);
-  const setup = !SAMPLE && HAS_RELAY && !KEYS.qwen && !apiKey();
+  const setup = !SAMPLE && HAS_RELAY && !ttsProv();
   return `<div class="wrap">
   ${topbar('Forge', false)}
-  ${setup ? `<section class="card stack" style="border-color:var(--accent)"><b>Turn on the natural voice and your AI teacher</b><p class="small muted">One Alibaba Cloud key, pasted once. About 3 minutes.</p><button class="btn primary" data-a="go" data-v="settings">Set up</button></section>` : ''}
+  ${setup ? `<section class="card stack" style="border-color:var(--accent)"><b>Turn on the natural voice and your AI teacher</b><p class="small muted">One free Google key, made with your Gmail. About 2 minutes.</p><button class="btn primary" data-a="go" data-v="settings">Set up</button></section>` : ''}
   <section class="card stack-lg">
     <div class="row between">
       <div><div class="realm-zh">${ri.r.zh}${CN_NUM[ri.layer]}层</div><div class="muted small">${ri.r.en}, layer ${ri.layer} · 灵气 ${S.qi.toLocaleString()} qi</div></div>
@@ -1089,11 +1091,14 @@ function vSettings() {
   </section>
   <section class="card stack">
     <b>Voice</b>
-    ${HAS_RELAY ? (KEYS.qwen ? `<div class="row between"><div><b class="small">Natural voice</b><div class="tiny muted">Qwen3-TTS, the same voice on every device. Clips are saved here, so repeats are instant and free.</div></div><div class="seg"><button class="${s.voiceEngine !== 'device' ? 'on' : ''}" data-a="set" data-k="voiceEngine" data-val="auto">On</button><button class="${s.voiceEngine === 'device' ? 'on' : ''}" data-a="set" data-k="voiceEngine" data-val="device">Off</button></div></div>
-    ${TTS.bad ? `<p class="small" style="color:var(--bad)">${TTS.bad === 'badkey' ? 'Alibaba rejected the key. Check it under AI teacher below.' : TTS.bad === 'nofunds' ? 'Your Alibaba balance is empty.' : 'Qwen-TTS isn’t enabled on your Alibaba account yet.'} Using the device voice for now.</p>` : ''}
-    ${s.voiceEngine !== 'device' ? `<label for="cvoice">Teacher's voice</label><select id="cvoice" data-change="cloudvoice">${QWEN_VOICES.map(([k, l]) => `<option value="${k}" ${k === mainCloudVoice() ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><p class="tiny muted">Tone drills also use the other voices, so your ear learns tones from many speakers.</p>` : ''}`
-      : `<div class="stack" style="border:1px solid var(--accent);border-radius:12px;padding:12px"><b class="small">Turn on the natural voice</b><p class="tiny muted">Paste your Alibaba Cloud (Model Studio) key. The same key also runs the AI teacher.</p><input id="qwenkey" type="password" autocomplete="off" data-change="qwenkey" placeholder="sk-…" aria-label="Alibaba Cloud key"></div>`) : ''}
-    ${!HAS_RELAY || !KEYS.qwen || s.voiceEngine === 'device' ? (VOICES.length ? `<label for="voice">Device voice${HAS_RELAY ? ' (backup)' : ''}</label><select id="voice" data-change="voice" aria-label="Device Chinese voice">${VOICES.map(v => `<option value="${esc(v.name)}" ${mainVoice() && v.name === mainVoice().name ? 'selected' : ''}>${esc(v.name)} (${esc(v.lang)})</option>`).join('')}</select>` : '<p class="small" style="color:var(--warn)">No Chinese voice on this device. On Android or Boox: install Google Speech Services and add Chinese (Mandarin). On Windows: add Chinese in Speech settings.</p>') : ''}
+    ${HAS_RELAY ? (ttsProv() ? `<div class="row between"><div><b class="small">Natural voice</b><div class="tiny muted">${esc(TTS_NAMES[ttsProv()])}. The same voice on every device. Clips are saved here, so repeats are instant and free.</div></div><div class="seg"><button class="${s.voiceEngine !== 'device' ? 'on' : ''}" data-a="set" data-k="voiceEngine" data-val="auto">On</button><button class="${s.voiceEngine === 'device' ? 'on' : ''}" data-a="set" data-k="voiceEngine" data-val="device">Off</button></div></div>
+    ${TTS.bad ? `<p class="small" style="color:var(--bad)">${TTS.bad === 'badkey' ? 'The key was rejected. Check it under AI teacher below.' : TTS.bad === 'nofunds' ? 'Your balance is empty.' : 'This key can’t use the voice model yet.'} Using the device voice for now.</p>` : ''}
+    ${s.voiceEngine !== 'device' && ttsProvs().length > 1 ? `<label>Voice engine</label><div class="seg">${ttsProvs().map(p => `<button class="${p === ttsProv() ? 'on' : ''}" data-a="set" data-k="ttsEngine" data-val="${p}">${p === 'gemini' ? 'Google' : p === 'deepinfra' ? 'Qwen (DeepInfra)' : 'Qwen (Alibaba)'}</button>`).join('')}</div>
+    <div class="stack" style="border:1px solid var(--line, #ddd);border-radius:12px;padding:12px"><b class="small">Blind test: which voice sounds better?</b><p class="tiny muted">Hear the same sentence from both, unlabelled. Pick the better one, 3 rounds. Forge keeps the winner.</p>${UI.ab ? `<div class="row"><button class="btn sm" data-a="ab-pick" data-i="0" ${UI.ab.busy ? 'disabled' : ''}>A was better</button><button class="btn sm" data-a="ab-pick" data-i="1" ${UI.ab.busy ? 'disabled' : ''}>B was better</button><button class="btn sm ghost" data-a="ab-play" ${UI.ab.busy ? 'disabled' : ''}>▶ Again</button></div><p class="tiny muted">Round ${(UI.abRound || 0) + 1} of 3</p>` : `<button class="btn sm" data-a="ab-play">▶ Start blind test</button>`}</div>` : ''}
+    ${s.voiceEngine !== 'device' ? `<label for="cvoice">Teacher's voice</label><select id="cvoice" data-change="cloudvoice">${(TTS_VOICES[ttsProv()] || []).map(([k, l]) => `<option value="${k}" ${k === mainCloudVoice() ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><p class="tiny muted">Tone drills also use the other voices, so your ear learns tones from many speakers.</p>` : ''}
+    ${!KEYS.deepinfra ? `<details><summary class="small">Add the Qwen voice too (optional)</summary><p class="tiny muted">Alibaba's open Qwen3-TTS, hosted by DeepInfra (deepinfra.com → sign in with Google → API keys; add a few dollars of credit). About $1 a month.</p><input id="dikey" type="password" autocomplete="off" data-change="dikey" placeholder="DeepInfra key" aria-label="DeepInfra key"></details>` : ''}`
+      : `<div class="stack" style="border:1px solid var(--accent);border-radius:12px;padding:12px"><b class="small">Turn on the natural voice</b><ol class="tiny muted" style="margin:0;padding-left:18px"><li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and sign in with Gmail.</li><li>Tap <b>Create API key</b> and copy it.</li><li>Paste it here.</li></ol><input id="gkey" type="password" autocomplete="off" data-change="gkey" placeholder="AIza…" aria-label="Google AI Studio key"><p class="tiny muted">The same key also runs the AI teacher. Free to start.</p></div>`) : ''}
+    ${!HAS_RELAY || !ttsProv() || s.voiceEngine === 'device' ? (VOICES.length ? `<label for="voice">Device voice${HAS_RELAY ? ' (backup)' : ''}</label><select id="voice" data-change="voice" aria-label="Device Chinese voice">${VOICES.map(v => `<option value="${esc(v.name)}" ${mainVoice() && v.name === mainVoice().name ? 'selected' : ''}>${esc(v.name)} (${esc(v.lang)})</option>`).join('')}</select>` : '<p class="small" style="color:var(--warn)">No Chinese voice on this device. On Android or Boox: install Google Speech Services and add Chinese (Mandarin). On Windows: add Chinese in Speech settings.</p>') : ''}
     <label for="rate">Speed: ${s.rate.toFixed(2)}×</label><input id="rate" type="range" min="0.5" max="1.2" step="0.05" value="${s.rate}" data-change="rate">
     <div class="row"><button class="btn sm" data-a="play" data-say="欢迎参观我们的工厂。">▶ Test voice</button><span class="tiny muted">${cloudVoiceOn() ? 'Natural voice: ' + esc(mainCloudVoice()) : VOICES.length + ' device voice' + (VOICES.length === 1 ? '' : 's')}</span></div>
   </section>
@@ -1183,6 +1188,8 @@ Exactly 2 questions.`;
   UI.gen = false; render();
 }
 const ACT = {
+  'ab-play': () => abPlay(),
+  'ab-pick': a => abPick(+a.dataset.i),
   'llm-test': async () => {
     const P = PROVIDERS[provId()], out = () => document.getElementById('llm-test-out');
     if (out()) out().textContent = 'Testing…';
@@ -1263,7 +1270,7 @@ const ACT = {
   'hw-animate': () => { if (!HW) return; HW.cancelQuiz(); HW.showCharacter(); HW.animateCharacter({ onComplete: () => { setTimeout(() => { HW.hideCharacter(); HW.quiz(); }, 600); } }); },
   'hw-next': () => { const opts = $$('#hw-pick option').map(o => o.value); const i = opts.indexOf(UI.writeChar || opts[0]); UI.writeChar = opts[(i + 1) % opts.length]; render(); },
   'deck-track': a => { UI.deckTrack = a.dataset.t; render(); },
-  set: a => { const k = a.dataset.k, v = a.dataset.val; S.settings[k] = k === 'eink' ? v === '1' : (k === 'newPerDay' || k === 'retention') ? +v : v; persist(); render(); },
+  set: a => { const k = a.dataset.k, v = a.dataset.val; if (k === 'ttsEngine') TTS.bad = ''; S.settings[k] = k === 'eink' ? v === '1' : (k === 'newPerDay' || k === 'retention') ? +v : v; persist(); render(); },
   backup: async () => { try { await navigator.clipboard.writeText(JSON.stringify(S)); toast('Backup copied. Paste it into Restore on your other device.'); } catch (e) { $('#restore-box').innerHTML = `<textarea readonly aria-label="Backup">${esc(JSON.stringify(S))}</textarea><p class="tiny muted">Select all and copy.</p>`; } },
   restore: () => { $('#restore-box').innerHTML = `<label for="restore-in">Paste a backup</label><textarea id="restore-in"></textarea><button class="btn sm primary" data-a="restore-go">Merge into this device</button>`; },
   'restore-go': () => { try { const b = JSON.parse($('#restore-in').value); S = mergeState(S, b); persist(); toast('Backup merged.'); render(); } catch (e) { toast('That is not a Forge backup. Copy it again and paste the whole text.'); } },
@@ -1286,11 +1293,12 @@ document.addEventListener('change', async e => {
   if (t.dataset.file) { const file = t.files && t.files[0]; if (!file) return; try { const rec = await decodeFile(file); handleRecording(t.dataset.file, rec); } catch (err) { toast('Could not read that recording. Try m4a, mp3 or wav.'); } t.value = ''; return; }
   const k = t.dataset.change; if (!k) return;
   if (k === 'voice') { S.settings.voice = t.value; persist(); deviceSay('你好'); }
-  if (k === 'cloudvoice') { S.settings.cloudVoice = t.value; persist(); say('你好，欢迎来到我们的工厂。'); }
-  if (k === 'qwenkey') { const v = t.value.trim(); if (v) { KEYS.qwen = v; TTS.bad = ''; saveKeys(); toast('Natural voice on. The teacher uses this key too.'); setTimeout(render); } }
+  if (k === 'cloudvoice') { (S.settings.cloudVoices ||= {})[ttsProv()] = t.value; persist(); say('你好，欢迎来到我们的工厂。'); }
+  if (k === 'dikey') { const v = t.value.trim(); if (v) { KEYS.deepinfra = v; TTS.bad = ''; saveKeys(); toast('Qwen voice added. Try the blind test.'); setTimeout(render); } }
+  if (k === 'gkey') { const v = t.value.trim(); if (v) { KEYS.gemini = v; TTS.bad = ''; saveKeys(); toast('Natural voice on. The teacher uses this key too.'); setTimeout(() => { render(); say('你好！欢迎来到 Forge。'); }); } }
   if (k === 'rate') { S.settings.rate = +t.value; persist(); render(); }
   if (k === 'prov') { S.settings.provider = t.value; UI.llmTest = ''; VIA_RELAY = false; persist(); setTimeout(render); }
-  if (k === 'apikey') { const v = t.value.trim(); if (v) KEYS[provId()] = v; else delete KEYS[provId()]; if (provId() === 'qwen') TTS.bad = ''; saveKeys(); UI.llmTest = ''; setTimeout(render); }
+  if (k === 'apikey') { const v = t.value.trim(); if (v) KEYS[provId()] = v; else delete KEYS[provId()]; if (provId() === ttsProv()) TTS.bad = ''; saveKeys(); UI.llmTest = ''; setTimeout(render); }
   if (k === 'model') { (S.settings.models ||= {})[provId()] = t.value.trim(); persist(); }
   if (k === 'gym-word') { UI.gymWord = D.pairs.find(p => p[0] === t.value); render(); }
   if (k === 'hw-pick') { UI.writeChar = t.value; render(); }
@@ -1827,36 +1835,46 @@ Object.assign(ACT, {
 document.addEventListener('submit', e => { const f = e.target; if (f.dataset.form !== 'tch') return; e.preventDefault(); const inp = $('#tch-in'); const v = inp.value.trim(); if (!v || !TCH.typed) return; inp.value = ''; TCH.typed(v); });
 
 /* ---------- natural voice: Qwen3-TTS through Forge's relay, cached on the device; device voice is the fallback ---------- */
-const QWEN_VOICES = [['Cherry', 'Cherry · warm female'], ['Serena', 'Serena · calm female'], ['Chelsie', 'Chelsie · bright female'], ['Momo', 'Momo · young female'], ['Vivian', 'Vivian · female'], ['Maia', 'Maia · female'], ['Ethan', 'Ethan · male, standard'], ['Moon', 'Moon · male'], ['Kai', 'Kai · male'], ['Ryan', 'Ryan · male']];
-const QWEN_POOL = QWEN_VOICES.map(v => v[0]);
-const TTS = { el: null, mem: new Map(), inflight: new Map(), bad: '', db: null, playing: null, epoch: 0, unlocked: false, active: 0, q: [] };
-function cloudVoiceOn() { return HAS_RELAY && !!KEYS.qwen && S.settings.voiceEngine !== 'device' && !TTS.bad; }
-function mainCloudVoice() { return QWEN_POOL.includes(S.settings.cloudVoice) ? S.settings.cloudVoice : 'Cherry'; }
-const ttsKey = (text, voice, lang) => voice + '|' + lang + '|' + text;
+const TTS_VOICES = {
+  gemini: [['Kore', 'Kore · firm, clear'], ['Sulafat', 'Sulafat · warm'], ['Vindemiatrix', 'Vindemiatrix · gentle'], ['Aoede', 'Aoede · breezy'], ['Leda', 'Leda · youthful'], ['Achernar', 'Achernar · soft'], ['Charon', 'Charon · informative'], ['Iapetus', 'Iapetus · clear'], ['Puck', 'Puck · upbeat'], ['Orus', 'Orus · firm']],
+  deepinfra: [['Vivian', 'Vivian · female'], ['Serena', 'Serena · female'], ['Uncle_Fu', 'Uncle Fu · older male']],
+  qwen: [['Cherry', 'Cherry · warm female'], ['Serena', 'Serena · calm female'], ['Chelsie', 'Chelsie · bright female'], ['Momo', 'Momo · young female'], ['Vivian', 'Vivian · female'], ['Maia', 'Maia · female'], ['Ethan', 'Ethan · male, standard'], ['Moon', 'Moon · male'], ['Kai', 'Kai · male'], ['Ryan', 'Ryan · male']],
+};
+const TTS = { el: null, mem: new Map(), inflight: new Map(), bad: '', db: null, playing: null, epoch: 0, unlocked: false, active: 0, q: [], cool: 0 };
+const TTS_NAMES = { gemini: 'Google Gemini voice', deepinfra: 'Qwen3-TTS (open model, via DeepInfra)', qwen: 'Qwen3-TTS (Alibaba)' };
+function ttsProvs() { return ['gemini', 'deepinfra', 'qwen'].filter(p => KEYS[p]); }
+function ttsProv() { const ok = ttsProvs(); return ok.includes(S.settings.ttsEngine) ? S.settings.ttsEngine : (ok[0] || ''); }
+function ttsPool() { return (TTS_VOICES[ttsProv()] || []).map(v => v[0]); }
+function cloudVoiceOn() { return HAS_RELAY && !!ttsProv() && S.settings.voiceEngine !== 'device' && !TTS.bad; }
+function mainCloudVoice() { const pool = ttsPool(), pick = (S.settings.cloudVoices || {})[ttsProv()] || S.settings.cloudVoice; return pool.includes(pick) ? pick : (pool[0] || ''); }
+const ttsKey = (text, voice, lang, slow) => ttsProv() + '|' + voice + '|' + lang + (slow ? '|slow' : '') + '|' + text;
 function ttsDB() {
   if (!TTS.db) TTS.db = new Promise(res => { try { const r = indexedDB.open('forge-tts', 1); r.onupgradeneeded = () => r.result.createObjectStore('clips'); r.onsuccess = () => res(r.result); r.onerror = () => res(null); } catch (e) { res(null); } });
   return TTS.db;
 }
 async function dbGet(k) { const db = await ttsDB(); if (!db) return null; return new Promise(res => { try { const q = db.transaction('clips').objectStore('clips').get(k); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); } catch (e) { res(null); } }); }
 async function dbPut(k, blob) { const db = await ttsDB(); if (!db) return; try { db.transaction('clips', 'readwrite').objectStore('clips').put(blob, k); } catch (e) { } }
-function ttsSlot() { return new Promise(r => { if (TTS.active < 3) { TTS.active++; r(); } else TTS.q.push(r); }); }
+function ttsSlot(now) { return new Promise(r => { if (TTS.active < 2) { TTS.active++; r(); } else if (now) TTS.q.unshift(r); else TTS.q.push(r); }); }
 function ttsFree() { const n = TTS.q.shift(); if (n) n(); else TTS.active--; }
-function clip(text, voice = mainCloudVoice(), lang = 'Chinese') {
+function clip(text, voice = mainCloudVoice(), lang = 'Chinese', o = {}) {
   text = String(text).trim();
-  const k = ttsKey(text, voice, lang);
+  const slow = !!o.slow, prov = ttsProv(), k = ttsKey(text, voice, lang, slow);
   if (TTS.mem.has(k)) return Promise.resolve(TTS.mem.get(k));
   if (TTS.inflight.has(k)) return TTS.inflight.get(k);
   const p = (async () => {
     let blob = await dbGet(k);
     if (!blob) {
       if (!cloudVoiceOn()) throw new Error('off');
-      await ttsSlot();
+      while (Date.now() < TTS.cool) { if (o.now) throw new Error('cooling'); await sleep(TTS.cool - Date.now() + 50); }
+      await ttsSlot(o.now);
       try {
-        const r = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + KEYS.qwen }, body: JSON.stringify({ text, voice, lang }) });
+        const r = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + KEYS[prov] }, body: JSON.stringify({ provider: prov, text, voice, lang, slow, model: TTS_MODEL_HINT() }) });
         if (r.status === 401) { TTS.bad = 'badkey'; ttsNotice(); throw new Error('badkey'); }
         if (r.status === 403) { TTS.bad = 'denied'; ttsNotice(); throw new Error('denied'); }
         if (r.status === 402) { TTS.bad = 'nofunds'; ttsNotice(); throw new Error('nofunds'); }
+        if (r.status === 429) { TTS.cool = Date.now() + 25000; toastOnce('tts-429', prov === 'gemini' ? 'Free voice limit reached for a moment; using the device voice. Turning on billing in Google AI Studio removes the limit.' : 'Voice limit reached for a moment; using the device voice.'); throw new Error('rate'); }
         if (!r.ok) throw new Error('tts ' + r.status);
+        const m = r.headers.get('x-forge-tts-model'); if (m) try { localStorage.setItem('forge.ttsModel.' + prov, m); } catch (e) { }
         blob = await r.blob(); if (!blob.size) throw new Error('empty');
         dbPut(k, blob);
       } finally { ttsFree(); }
@@ -1867,8 +1885,10 @@ function clip(text, voice = mainCloudVoice(), lang = 'Chinese') {
   p.then(() => TTS.inflight.delete(k), () => TTS.inflight.delete(k));
   return p;
 }
+function TTS_MODEL_HINT() { try { return localStorage.getItem('forge.ttsModel.' + ttsProv()) || ''; } catch (e) { return ''; } }
 function ttsNotice() {
-  const msg = { badkey: 'Natural voice is off: Alibaba rejected the key. Check it in Settings.', denied: 'Natural voice is off: Qwen-TTS isn’t enabled on your Alibaba account yet.', nofunds: 'Natural voice is off: your Alibaba balance is empty.' }[TTS.bad];
+  const who = { gemini: 'Google', deepinfra: 'DeepInfra', qwen: 'Alibaba' }[ttsProv()] || 'The voice service';
+  const msg = { badkey: `Natural voice is off: ${who} rejected the key. Check it in Settings.`, denied: `Natural voice is off: your ${who} key can’t use the voice model yet.`, nofunds: `Natural voice is off: your ${who} balance is empty.` }[TTS.bad];
   if (msg) toastOnce('tts-' + TTS.bad, msg);
 }
 function prefetchZh(texts) { if (!cloudVoiceOn()) return; for (const t of texts) if (t && /\p{Script=Han}/u.test(t)) clip(t).catch(() => { }); }
@@ -1900,16 +1920,17 @@ function hushAll() {
 }
 const cloudRate = r => clamp((r ?? S.settings.rate) + 0.05, 0.7, 1.15);
 const within = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('slow')), ms))]);
-async function cloudSay(text, voice, lang, rate) {
+async function cloudSay(text, voice, lang, rate, slow) {
   const ep = TTS.epoch;
-  const url = await within(clip(text, voice, lang), 6000).catch(() => null);
+  const url = await within(clip(text, voice, lang, { now: true, slow }), 7000).catch(() => null);
   if (!url || ep !== TTS.epoch) return !!url; // paused while loading: stay quiet
   try { speechSynthesis.cancel(); } catch (e) { }
   return playUrl(url, rate);
 }
 async function say(text, o = {}) {
   text = String(text);
-  if (cloudVoiceOn() && /\p{Script=Han}/u.test(text) && await cloudSay(text, o.cloud || mainCloudVoice(), 'Chinese', cloudRate(o.rate))) return;
+  const slow = ttsProv() === 'gemini' && (o.rate ?? S.settings.rate) <= 0.72;
+  if (cloudVoiceOn() && /\p{Script=Han}/u.test(text) && await cloudSay(text, o.cloud || mainCloudVoice(), 'Chinese', slow ? 1 : cloudRate(o.rate), slow)) return;
   return deviceSay(text, o);
 }
 async function sayEn(text) {
@@ -1918,9 +1939,9 @@ async function sayEn(text) {
 }
 function sayVaried(text) { // many-voice drill: real different speakers once they're cached, a little speed variation
   if (cloudVoiceOn()) {
-    const ready = QWEN_POOL.filter(v => TTS.mem.has(ttsKey(String(text).trim(), v, 'Chinese')));
+    const ready = ttsPool().filter(v => TTS.mem.has(ttsKey(String(text).trim(), v, 'Chinese', false)));
     const v = ready.length ? pick(ready) : mainCloudVoice();
-    QWEN_POOL.filter(x => !ready.includes(x)).sort(() => Math.random() - 0.5).slice(0, 2).forEach(x => clip(text, x).catch(() => { }));
+    ttsPool().filter(x => !ready.includes(x)).sort(() => Math.random() - 0.5).slice(0, ttsProv() === 'gemini' ? 1 : 2).forEach(x => clip(text, x).catch(() => { }));
     return say(text, { cloud: v, rate: 0.75 + Math.random() * 0.25 });
   }
   return deviceSayVaried(text);
@@ -1930,6 +1951,33 @@ function prefetchVisible() { // warm the clips for every ▶ button on screen
   if (!cloudVoiceOn()) return;
   clearTimeout(PREFETCH_T);
   PREFETCH_T = setTimeout(() => prefetchZh([...document.querySelectorAll('[data-say]')].slice(0, 16).map(b => b.dataset.say)), 250);
+}
+
+const AB_LINES = ['欢迎参观我们的工厂。', '我们的产品质量很好，价格也很合理。', '你好，我叫 Sandesh，很高兴认识你。'];
+async function abPlay() {
+  const provs = ttsProvs().filter(p => p !== 'qwen' || HAS_RELAY);
+  if (provs.length < 2) { toast('Add both keys first.'); return; }
+  const line = AB_LINES[(UI.abRound || 0) % AB_LINES.length];
+  const order = Math.random() < 0.5 ? provs.slice(0, 2) : provs.slice(0, 2).reverse();
+  UI.ab = { order, line, busy: true }; render();
+  const keep = S.settings.ttsEngine;
+  for (const [i, p] of order.entries()) {
+    S.settings.ttsEngine = p; toast(i ? 'Voice B' : 'Voice A');
+    await say(line); await sleep(500);
+  }
+  S.settings.ttsEngine = keep;
+  if (UI.ab) { UI.ab.busy = false; render(); }
+}
+function abPick(i) {
+  if (!UI.ab || UI.ab.busy) return;
+  const win = UI.ab.order[i]; UI.abVotes = UI.abVotes || {}; UI.abVotes[win] = (UI.abVotes[win] || 0) + 1; UI.abRound = (UI.abRound || 0) + 1;
+  const total = Object.values(UI.abVotes).reduce((x, y) => x + y, 0);
+  if (total >= 3) {
+    const best = Object.entries(UI.abVotes).sort((x, y) => y[1] - x[1])[0][0];
+    S.settings.ttsEngine = best; persist(); UI.ab = null; UI.abVotes = null; UI.abRound = 0;
+    toast(`You picked ${TTS_NAMES[best]}. Forge will use it everywhere.`); render(); return;
+  }
+  UI.ab = null; render(); setTimeout(abPlay, 300);
 }
 
 /* ---------- boot ---------- */
