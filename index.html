@@ -352,11 +352,46 @@ const LS = 'forge.v0', LS_KEY = 'forge.v0.key';
 const fresh = () => ({
   v: 1, updatedAt: 0, cards: {}, log: [], ear: [], speak: [], days: {}, friction: [], stories: [], read: {},
   qi: 0, realm: 0, realmQi: 0, manual: {}, calib: [], writing: {}, custom: {},
-  settings: { newPerDay: 8, retention: 0.9, eink: false, theme: 'auto', voice: '', rate: 0.85, pinyin: true, orModel: 'qwen/qwen3.6-plus' },
+  settings: { newPerDay: 8, retention: 0.9, eink: false, theme: 'auto', voice: '', rate: 0.85, pinyin: true, orModel: 'qwen/qwen3.6-plus', provider: '', models: {} },
 });
 let S = fresh();
 try { const j = localStorage.getItem(LS); if (j) S = Object.assign(fresh(), JSON.parse(j)); S.settings = Object.assign(fresh().settings, S.settings); } catch (e) { /* storage unavailable: keep in memory */ }
-let OR_KEY = ''; try { OR_KEY = localStorage.getItem(LS_KEY) || ''; } catch (e) { }
+/* ---------- AI providers: keys stay on this device, never synced ---------- */
+const PROVIDERS = {
+  deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash', models: ['deepseek-flash', 'deepseek-v4-pro'], extra: { thinking: { type: 'disabled' } }, ph: 'sk-…', where: 'platform.deepseek.com → API keys', note: 'Recommended. Native Chinese, about $1 a month for daily lessons (double during 6:30–9:30 and 11:30–15:30 IST on weekdays).' },
+  qwen: { name: 'Qwen (Alibaba Cloud)', url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen3.8-flash', models: ['qwen3.8-flash', 'qwen3.7-plus', 'qwen3.8-max'], extra: { enable_thinking: false }, ph: 'sk-…', where: 'Alibaba Cloud Model Studio, Singapore region → API keys', note: 'Native Chinese. New accounts get 1M free tokens per model for 90 days.' },
+  glm: { name: 'GLM (Z.ai)', url: 'https://api.z.ai/api/paas/v4/chat/completions', model: 'glm-4.7-flash', models: ['glm-4.7-flash', 'glm-4.7', 'glm-5.2'], extra: { thinking: { type: 'disabled' } }, ph: 'API key', where: 'z.ai → API keys', note: 'GLM-4.7-Flash is free. A good backup.' },
+  openrouter: { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1/chat/completions', model: 'qwen/qwen3.6-plus', models: ['qwen/qwen3.6-plus', 'deepseek/deepseek-v4-pro', 'z-ai/glm-5-turbo'], extra: { reasoning: { enabled: false } }, ph: 'sk-or-…', where: 'openrouter.ai/keys', note: 'One key for many models; 5.5% fee on every top-up ($0.80 minimum).' },
+};
+let KEYS = {};
+try { const raw = localStorage.getItem(LS_KEY) || ''; KEYS = raw.startsWith('{') ? JSON.parse(raw) : raw ? { openrouter: raw } : {}; } catch (e) { KEYS = {}; }
+function saveKeys() { try { localStorage.setItem(LS_KEY, JSON.stringify(KEYS)); } catch (e) { } }
+function provId() { const p = S.settings.provider; return PROVIDERS[p] ? p : (KEYS.openrouter && !KEYS.deepseek ? 'openrouter' : 'deepseek'); }
+function provModel(id = provId()) { return (S.settings.models || {})[id] || (id === 'openrouter' && S.settings.orModel) || PROVIDERS[id].model; }
+function apiKey() { return KEYS[provId()] || ''; }
+const HAS_RELAY = /^https?:$/.test(location.protocol) && !/^(localhost|127\.)/.test(location.hostname);
+let VIA_RELAY = false;
+async function chatLLM(messages, { json = false, max = 500, temp = 0.6 } = {}) {
+  const id = provId(), P = PROVIDERS[id], key = KEYS[id];
+  if (!key) throw 'nokey';
+  const body = Object.assign({ model: provModel(id), messages, temperature: temp, max_tokens: max }, P.extra);
+  if (json) body.response_format = { type: 'json_object' };
+  const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key };
+  if (id === 'openrouter') headers['X-Title'] = 'Forge';
+  const send = async b => {
+    if (!VIA_RELAY) {
+      try { return await fetch(P.url, { method: 'POST', headers, body: JSON.stringify(b) }); }
+      catch (e) { if (!HAS_RELAY) throw e; VIA_RELAY = true; } // browser blocked the direct call (CORS): use Forge's relay
+    }
+    return fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify({ provider: id, body: b }) });
+  };
+  let r = await send(body);
+  if (r.status === 400) { const b2 = Object.assign({}, body); delete b2.response_format; for (const k of Object.keys(P.extra)) delete b2[k]; r = await send(b2); }
+  if (r.status === 401) throw 'badkey';
+  if (r.status === 402) throw 'nofunds';
+  if (!r.ok) throw new Error(P.name + ' ' + r.status);
+  const j = await r.json(); return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+}
 const UI = { view: 'home', sheet: null, deckTrack: 'all', gymTab: 'hear', writeChar: null, storyId: null, gen: false };
 
 function day(k = dayKey()) { return (S.days[k] ||= { rev: 0, new: 0, speak: 0, ear: 0, earOk: 0, qi: 0, done: 0, skips: 0 }); }
@@ -996,7 +1031,7 @@ function vStory() {
     <div>${readingHTML(cur)}</div></section>${questionsHTML(cur, 's' + cur.id)}</div>`;
   }
   const k = knownCount() + learningCount();
-  const genAvail = SAMPLE || OR_KEY;
+  const genAvail = SAMPLE || apiKey();
   return `<div class="wrap">${topbar('Stories')}
   <section class="card stack"><h2>Write me a new story</h2>
     <p class="small muted">Written only with words you've learned, then checked by code. ${k < 25 ? `Unlocks at 25 words (you have ${k}).` : ''}</p>
@@ -1056,8 +1091,11 @@ function vSettings() {
   </section>
   <section class="card stack">
     <b>AI teacher and stories</b>
-    <p class="small muted">${SAMPLE ? 'Inside Claude, the teacher and story writer use Claude.' : 'On your own link, the teacher uses OpenRouter with your key. The key stays on this device.'}</p>
-    ${SAMPLE ? '' : `<label for="orkey">OpenRouter key</label><input id="orkey" type="password" autocomplete="off" value="${esc(OR_KEY)}" data-change="orkey" placeholder="sk-or-…"><label for="ormodel">Model</label><input id="ormodel" type="text" list="models" value="${esc(s.orModel)}" data-change="ormodel"><datalist id="models"><option value="qwen/qwen3.6-plus"><option value="moonshotai/kimi-k2.6"><option value="z-ai/glm-5-turbo"><option value="deepseek/deepseek-v4-pro"></datalist><p class="tiny muted">Qwen is the default: native Chinese, good English, fast and cheap (about $0.30 per hour of lessons).</p>`}
+    <p class="small muted">${SAMPLE ? 'Inside Claude, the teacher and story writer use Claude.' : 'On your own link, the teacher and story writer use the provider below with your key. Keys stay on this device and are never synced.'}</p>
+    ${SAMPLE ? '' : (() => { const id = provId(), P = PROVIDERS[id]; return `<label for="prov">Provider</label><select id="prov" data-change="prov">${Object.entries(PROVIDERS).map(([k, p]) => `<option value="${k}" ${k === id ? 'selected' : ''}>${esc(p.name)}${KEYS[k] ? ' ✓' : ''}</option>`).join('')}</select><p class="tiny muted">${esc(P.note)}</p>
+    <label for="apikey">${esc(P.name)} key</label><input id="apikey" type="password" autocomplete="off" value="${esc(KEYS[id] || '')}" data-change="apikey" placeholder="${esc(P.ph)}"><p class="tiny muted">Get one at ${esc(P.where)}.</p>
+    <label for="model">Model</label><input id="model" type="text" list="models" value="${esc(provModel(id))}" data-change="model"><datalist id="models">${P.models.map(m => `<option value="${esc(m)}">`).join('')}</datalist>
+    <div class="row"><button class="btn sm" data-a="llm-test" ${KEYS[id] ? '' : 'disabled'}>Test speed</button><span class="tiny muted" id="llm-test-out">${UI.llmTest ? esc(UI.llmTest) : 'Times one short reply from this provider.'}</span></div>`; })()}
   </section>
   <section class="card stack">
     <b>Your data</b>
@@ -1124,10 +1162,7 @@ Exactly 2 questions.`;
   try {
     let text = '';
     if (SAMPLE) { const r = await SAMPLE(prompt, { modelTier: 'default' }); text = r.text; }
-    else if (OR_KEY) {
-      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + OR_KEY }, body: JSON.stringify({ model: S.settings.orModel, messages: [{ role: 'user', content: prompt }], temperature: 0.7 }) });
-      if (!r.ok) throw new Error('OpenRouter said ' + r.status); const j = await r.json(); text = j.choices[0].message.content;
-    }
+    else text = await chatLLM([{ role: 'user', content: prompt }], { json: true, max: 2000, temp: 0.7 });
     const js = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
     if (!Array.isArray(js.lines) || !js.lines.length) throw new Error('bad shape');
     const st = { id: 'g' + Date.now(), track, gen: true, title: String(js.title || '新故事'), en: String(js.en || 'New story'), lines: js.lines.filter(l => Array.isArray(l) && l[0]).map(l => [String(l[0]), String(l[1] || ''), String(l[2] || '')]), qs: (js.qs || []).filter(q => q && Array.isArray(q.o) && q.o.length >= 2).slice(0, 2).map(q => ({ q: String(q.q), en: String(q.en || ''), o: q.o.map(String), a: Number(q.a) || 0 })) };
@@ -1140,6 +1175,14 @@ Exactly 2 questions.`;
   UI.gen = false; render();
 }
 const ACT = {
+  'llm-test': async () => {
+    const P = PROVIDERS[provId()], out = () => document.getElementById('llm-test-out');
+    if (out()) out().textContent = 'Testing…';
+    const t0 = performance.now();
+    try { await chatLLM([{ role: 'user', content: 'Reply with only the word 好.' }], { max: 8, temp: 0 }); UI.llmTest = `${P.name} answered in ${Math.round(performance.now() - t0)} ms${VIA_RELAY ? ' (via Forge relay)' : ''}.`; }
+    catch (e) { UI.llmTest = e === 'nokey' ? 'Add a key first.' : e === 'badkey' ? `${P.name} rejected the key.` : e === 'nofunds' ? `Your ${P.name} balance is empty.` : `Could not reach ${P.name}.`; }
+    if (out()) out().textContent = UI.llmTest;
+  },
   home: () => { UI.view = 'home'; UI.storyId = null; SES = null; render(); },
   go: a => { UI.view = a.dataset.v; if (UI.view === 'story') UI.storyId = null; render(); window.scrollTo(0, 0); },
   start: () => startSession(false),
@@ -1236,8 +1279,9 @@ document.addEventListener('change', async e => {
   const k = t.dataset.change; if (!k) return;
   if (k === 'voice') { S.settings.voice = t.value; persist(); say('你好'); }
   if (k === 'rate') { S.settings.rate = +t.value; persist(); render(); }
-  if (k === 'orkey') { OR_KEY = t.value.trim(); try { localStorage.setItem(LS_KEY, OR_KEY); } catch (err) { } }
-  if (k === 'ormodel') { S.settings.orModel = t.value.trim(); persist(); }
+  if (k === 'prov') { S.settings.provider = t.value; UI.llmTest = ''; VIA_RELAY = false; persist(); setTimeout(render); }
+  if (k === 'apikey') { const v = t.value.trim(); if (v) KEYS[provId()] = v; else delete KEYS[provId()]; saveKeys(); UI.llmTest = ''; setTimeout(render); }
+  if (k === 'model') { (S.settings.models ||= {})[provId()] = t.value.trim(); persist(); }
   if (k === 'gym-word') { UI.gymWord = D.pairs.find(p => p[0] === t.value); render(); }
   if (k === 'hw-pick') { UI.writeChar = t.value; render(); }
 });
@@ -1597,13 +1641,7 @@ async function callLLM(messages) {
     const r = await SAMPLE(m, { modelTier: 'quick', cache: false });
     return r.text;
   }
-  if (!OR_KEY) throw 'nokey';
-  const body = { model: S.settings.orModel || 'qwen/qwen3.6-plus', messages, temperature: 0.6, max_tokens: 500, reasoning: { enabled: false }, response_format: { type: 'json_object' } };
-  let r = await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + OR_KEY, 'X-Title': 'Forge' }, body: JSON.stringify(body) });
-  if (r.status === 400) { delete body.response_format; delete body.reasoning; r = await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + OR_KEY, 'X-Title': 'Forge' }, body: JSON.stringify(body) }); }
-  if (r.status === 401) throw 'badkey';
-  if (!r.ok) throw new Error('OpenRouter ' + r.status);
-  const j = await r.json(); return j.choices[0].message.content || '';
+  return chatLLM(messages, { json: true, max: 500, temp: 0.6 });
 }
 function parseTurn(text) {
   const t = String(text); const js = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1));
@@ -1708,7 +1746,7 @@ async function teacherLoop() {
       if (TCH.silences >= 2) { TCH.silences = 0; TCH.paused = true; TCH.gen++; setTStatus('Paused'); await sayEn('Pausing. Tap resume when you are ready.'); paintTeacher(); }
     } catch (e) {
       if (e === 'cancel') continue;
-      if (e === 'nokey' || e === 'badkey') { stopTeacher(); TCH.err = e; render(); return; }
+      if (e === 'nokey' || e === 'badkey' || e === 'nofunds') { stopTeacher(); TCH.err = e; render(); return; }
       if (e && (e.code === 'not_granted')) { stopTeacher(); TCH.err = 'denied'; render(); return; }
       console.error(e); setTStatus('Connection problem, retrying'); await sleep(e && e.code === 'rate_limited' ? 8000 : 2500);
     }
@@ -1749,8 +1787,9 @@ function vTeacher() {
     <div id="tch-stats" class="drv-stats">${teacherStats()}</div>
     ${TCH.typeMode ? `<form class="tch-type" data-form="tch"><input id="tch-in" type="text" autocomplete="off" autocapitalize="off" placeholder="Type 工厂, gong1chang3, or English" aria-label="Your answer"><button class="btn primary" type="submit">Send</button></form><p class="tiny" style="color:#9aa3af;text-align:center">No mic here. Type, or use your keyboard's voice-typing button.</p>` : ''}
     <button id="tch-pause" class="drv-pause ${TCH.typeMode ? 'short' : ''}" data-a="tch-toggle">${TCH.paused ? 'Resume' : 'Pause'}</button></div>`;
-  const err = TCH.err === 'nokey' ? `<section class="card stack" style="border-color:var(--bad)"><b>The teacher needs a model.</b><p class="small">Add an OpenRouter key in Settings. It stays on this device.</p><button class="btn sm" data-a="go" data-v="settings">Open Settings</button></section>`
-    : TCH.err === 'badkey' ? `<section class="card stack" style="border-color:var(--bad)"><b>OpenRouter rejected the key.</b><p class="small">Check it in Settings.</p></section>`
+  const err = TCH.err === 'nokey' ? `<section class="card stack" style="border-color:var(--bad)"><b>The teacher needs a model.</b><p class="small">Add an AI provider key in Settings (DeepSeek is the recommended one). It stays on this device.</p><button class="btn sm" data-a="go" data-v="settings">Open Settings</button></section>`
+    : TCH.err === 'badkey' ? `<section class="card stack" style="border-color:var(--bad)"><b>${esc(PROVIDERS[provId()].name)} rejected the key.</b><p class="small">Check it in Settings.</p><button class="btn sm" data-a="go" data-v="settings">Open Settings</button></section>`
+    : TCH.err === 'nofunds' ? `<section class="card stack" style="border-color:var(--bad)"><b>Your ${esc(PROVIDERS[provId()].name)} balance is empty.</b><p class="small">Top it up, or switch to a free provider (GLM-4.7-Flash) in Settings.</p><button class="btn sm" data-a="go" data-v="settings">Open Settings</button></section>`
     : TCH.err === 'denied' ? `<section class="card stack" style="border-color:var(--bad)"><b>Claude access was declined.</b><p class="small">Start again and allow it when asked.</p></section>` : '';
   const mic = SR && MIC_OK !== false;
   const f = UI.tFocus || 'f';
@@ -1759,7 +1798,7 @@ function vTeacher() {
     <p>A spoken lesson with 林老师, Teacher Lin. She teaches one word or phrase at a time, has you say it, corrects your tones, builds it into phrases and little roleplays, and keeps bringing back what you've learned. Words she teaches become cards in your reviews.</p>
     <div class="stack"><b class="small">Today's focus</b><div class="seg" role="radiogroup">${[['f', 'Partners'], ['b', 'Basics'], ['c', 'Cultivation'], ['free', 'Anything']].map(([k, l]) => `<button class="${f === k ? 'on' : ''}" data-a="tch-focus" data-f="${k}">${l}</button>`).join('')}</div></div>
     <button class="btn primary big" data-a="tch-start">Start lesson</button>
-    <p class="tiny muted">${mic ? 'Hands-free: she talks, beeps, you answer out loud. Pause any time.' : 'The mic isn\'t available here, so you\'ll type answers (or use voice typing on your keyboard). For the hands-free car version, use your own Forge link.'} ${SAMPLE ? 'Runs on Claude.' : OR_KEY ? `Runs on ${esc(S.settings.orModel)} via OpenRouter.` : 'Needs an OpenRouter key in Settings.'}</p>
+    <p class="tiny muted">${mic ? 'Hands-free: she talks, beeps, you answer out loud. Pause any time.' : 'The mic isn\'t available here, so you\'ll type answers (or use voice typing on your keyboard). For the hands-free car version, use your own Forge link.'} ${SAMPLE ? 'Runs on Claude.' : apiKey() ? `Runs on ${esc(provModel())} via ${esc(PROVIDERS[provId()].name)}.` : 'Needs an AI provider key in Settings.'}</p>
   </section></div>`;
 }
 Object.assign(ACT, {
