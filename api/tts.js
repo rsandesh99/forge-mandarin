@@ -104,13 +104,15 @@ module.exports = async (req, res) => {
   if (!text || text.length > 600 || !auth) { res.status(400).json({ error: 'Expected {provider, text, voice, lang} (text up to 600 characters) and an Authorization header.' }); return; }
   try {
     const out = provider === 'qwen' ? await qwen(auth, text, p.voice, lang) : provider === 'deepinfra' ? await deepinfra(auth, text, p.voice) : await gemini(auth, text, p.voice, lang, !!p.slow, p.model);
-    if (!out.audio || !out.audio.length) { sendErr(res, out.status || 502, out.raw); return; }
+    if (!out.audio || !out.audio.length) { console.log(JSON.stringify({ route: 'tts', provider, status: out.status || 502, error: String(out.raw || '').slice(0, 300) })); sendErr(res, out.status || 502, out.raw); return; }
+    console.log(JSON.stringify({ route: 'tts', provider, status: 200, model: out.model || '', chars: text.length, bytes: out.audio.length }));
     res.status(200);
     res.setHeader('Content-Type', out.type || 'audio/wav');
     res.setHeader('Cache-Control', 'no-store');
     if (out.model) res.setHeader('x-forge-tts-model', out.model);
     res.send(out.audio);
   } catch (e) {
+    console.log(JSON.stringify({ route: 'tts', provider, status: 502, error: String(e && e.message || e) }));
     res.status(502).json({ error: 'Could not reach the voice service' });
   }
 };

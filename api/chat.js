@@ -22,11 +22,13 @@ module.exports = async (req, res) => {
   try {
     const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(25000) });
     const text = await r.text();
+    console.log(JSON.stringify({ route: 'chat', provider, model: body.model, status: r.status, error: r.ok ? undefined : text.slice(0, 300) }));
     res.status(r.status);
     res.setHeader('Content-Type', r.headers.get('content-type') || 'application/json');
     res.setHeader('Cache-Control', 'no-store');
     res.send(text);
   } catch (e) {
+    console.log(JSON.stringify({ route: 'chat', provider, status: 502, error: String(e && e.message || e) }));
     res.status(502).json({ error: 'Could not reach ' + provider });
   }
 };
